@@ -21,17 +21,34 @@ local DIRS = {
 -- Hamiltonian path generation via DFS
 -- ---------------------------------------------------------------------------
 
+-- Node budget per start attempt: Warnsdorff ordering usually finds a path in
+-- a few hundred/thousand calls, but on an unlucky start it can backtrack
+-- catastrophically (observed hanging for 15+ seconds on a single n=5 start
+-- with no bound at all). Capping calls per start keeps worst-case latency
+-- bounded while still trying the next random start on budget exhaustion.
+local NODE_BUDGET_PER_START = 20000
+
 local function generatePath(n)
     local total   = n * n
     local visited = emptyBoolGrid(n)
     local path    = {}   -- path[k] = {r, c}  (1-indexed, k=1..total)
     local pos     = emptyGrid(n)  -- pos[r][c] = value placed there (or 0)
+    local nodes   = 0
 
     local function dfs(r, c, step)
-        if step > total then return true end
+        nodes = nodes + 1
+        if nodes > NODE_BUDGET_PER_START then return false end
         visited[r][c] = true
         pos[r][c]     = step
         path[step]    = { r, c }
+
+        -- step == total means this call just placed the last cell — done.
+        -- (The old "step > total" check here was unreachable: there is no
+        -- total+1-th cell to recurse into, so a full grid always fell
+        -- through to the neighbour search below, found no moves, and
+        -- backtracked — the search could *never* succeed, silently forcing
+        -- every generate() to exhaust its full search space and fall back.)
+        if step == total then return true end
 
         -- Collect unvisited neighbours and sort by Warnsdorff heuristic
         -- (fewest onward moves first) to speed up backtracking
@@ -86,16 +103,29 @@ local function generatePath(n)
         visited = emptyBoolGrid(n)
         pos     = emptyGrid(n)
         path    = {}
+        nodes   = 0
     end
 
-    -- Fallback: row-major order (always valid path, just not random)
+    -- Fallback: boustrophedon ("snake") order. Straight row-major order is
+    -- NOT a valid king-move path (the jump from column n back to column 1
+    -- between rows isn't adjacent); snake order keeps every step to an
+    -- orthogonal king move, so it's always a genuinely valid Hamiltonian path.
     pos  = emptyGrid(n)
     path = {}
+    local v = 0
     for r = 1, n do
-        for c = 1, n do
-            local v = (r - 1) * n + c
-            pos[r][c] = v
-            path[v]   = { r, c }
+        if r % 2 == 1 then
+            for c = 1, n do
+                v = v + 1
+                pos[r][c] = v
+                path[v]   = { r, c }
+            end
+        else
+            for c = n, 1, -1 do
+                v = v + 1
+                pos[r][c] = v
+                path[v]   = { r, c }
+            end
         end
     end
     return pos, path
