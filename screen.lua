@@ -215,13 +215,10 @@ function HidatoScreen:onDigitKey(d)
         if total <= 9 then
             self:_commitValue(r, c, d)
         else
-            -- Start two-digit accumulation
-            if d == 0 then
-                -- Leading zero: ignore
-                return
-            end
-            -- If d alone is a valid number (and grid is 5x5 max 25, so d<=9 is valid)
-            -- Accumulate: wait for a second digit
+            -- Start two-digit accumulation. A leading "0" is allowed here:
+            -- it's the only way to reach a single-digit value (1-9), since
+            -- every other first digit becomes the tens place -- "0" then
+            -- "5" combines to 5, just like "1" then "0" combines to 10.
             self.pending_digit = d
             self:updateStatus(T(_("Entering: %1 (tap another digit or Erase)"), d))
         end
