@@ -16,6 +16,7 @@ Fill the grid with consecutive numbers 1 to N. Each pair of consecutive numbers 
 - **Three difficulty levels** — Easy, Medium, Hard
 - **Path highlighting** — shows the chain of placed numbers
 - **Check** — validates adjacency between consecutive numbers
+- **Hint** — two taps: the first says which cell is about to give, the second acts on it. A cell that contradicts the solution is always reported before a fresh one is revealed
 - **Auto-save** — puzzle state saved and restored on next launch
 
 ## Installation
