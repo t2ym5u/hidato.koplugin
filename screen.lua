@@ -91,6 +91,7 @@ function HidatoScreen:buildLayout()
     local title_bar = self:buildTitleBar(_("Hidato"), function()
         return {
             { text = _("New game"),            callback = function() self:onNewGame() end },
+            self:makeDailyButtonConfig(),
             { text = self:getSizeButtonText(), callback = function() self:openSizeMenu() end },
             { text = self:getDiffButtonText(), callback = function() self:openDifficultyMenu() end },
             self:makeRulesButtonConfig(GAME_RULES_EN, GAME_RULES_FR),
