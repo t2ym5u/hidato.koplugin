@@ -2,5 +2,5 @@ local _ = require("gettext")
 return {
     fullname    = _("Hidato"),
     description = _("Connect numbers 1-N on a grid"),
-    version     = "1.3.0",
+    version     = "1.4.0",
 }
