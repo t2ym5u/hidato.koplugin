@@ -19,6 +19,7 @@ local T               = require("ffi/util").template
 
 local ScreenBase        = require("screen_base")
 local MenuHelper        = require("menu_helper")
+local GenProgress       = require("gen_progress")
 local HidatoBoard       = lrequire("board")
 local HidatoBoardWidget = lrequire("board_widget")
 
@@ -67,9 +68,10 @@ local HidatoScreen = ScreenBase:extend{}
 function HidatoScreen:init()
     local state = self.plugin:loadState()
     local n     = self.plugin:getSetting("grid_n", 5)
-    self.board  = HidatoBoard:new{ n = n }
+    self.board  = HidatoBoard:new{ n = n, empty = true }
     if not self.board:load(state) then
-        self.board:generate(self.plugin:getSetting("difficulty", "easy"))
+        local diff = self.plugin:getSetting("difficulty", "easy")
+        GenProgress.run(function(on_progress) self.board:generate(diff, on_progress) end)
     end
     self.selected      = nil
     self.pending_digit = nil   -- accumulates a two-digit number
@@ -245,8 +247,8 @@ end
 function HidatoScreen:onNewGame()
     local diff = self.plugin:getSetting("difficulty", "easy")
     local n    = self.plugin:getSetting("grid_n", 5)
-    self.board = HidatoBoard:new{ n = n }
-    self.board:generate(diff)
+    self.board = HidatoBoard:new{ n = n, empty = true }
+    GenProgress.run(function(on_progress) self.board:generate(diff, on_progress) end)
     self.selected      = nil
     self.pending_digit = nil
     self.plugin:saveState(self.board:serialize())

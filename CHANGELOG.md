@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-11-04
+
+### Changed
+- Much faster 6×6 Medium and Hard: up to 1.2 s on a desktop (about 30 s
+  on a Kobo) down to under 0.08 s. The solution check skips paths that can
+  no longer reach the next given number, leave a cell with no way in and
+  out, or leave cells no gap between givens can use, and remembers
+  positions it has already counted. Same puzzles, except for the rare grid
+  where the old check gave up early and kept a number it could have hidden.
+- Opening the game no longer builds a puzzle it then throws away, and New
+  game builds one puzzle instead of two.
+- A "Generating puzzle…" progress bar shows when a puzzle takes more than a
+  moment. Needs game-common 1.12.0.
+
 ## [1.4.3] - 2026-11-03
 
 ### Changed

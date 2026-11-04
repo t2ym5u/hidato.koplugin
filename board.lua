@@ -28,87 +28,228 @@ local NODE_BUDGET_UNIQUENESS = 200000
 
 local function countCompletions(puzzle, given, n, limit, node_budget)
     local total = n * n
-    local cell_of_num = {}
-    local num_of_cell = {}
-    for r = 1, n do num_of_cell[r] = {} end
-
-    local solutions, nodes, exhausted = 0, 0, false
-
-    local function search(num)
-        if solutions >= limit or exhausted then return end
-        nodes = nodes + 1
-        if nodes > node_budget then exhausted = true; return end
-        if num > total then solutions = solutions + 1; return end
-
-        local given_pos = nil
-        if num == 1 then
-            for r = 1, n do
-                for c = 1, n do
-                    if given[r][c] and puzzle[r][c] == 1 then given_pos = { r, c }; break end
-                end
-                if given_pos then break end
+    -- Where each given number sits, and for every k the smallest given
+    -- number >= k: number k on (r, c) can only lead to a solution when the
+    -- next given number g can still be reached in g - k king moves, i.e.
+    -- the Chebyshev distance from (r, c) to g's cell is at most g - k. That
+    -- prune only drops dead branches, so counts are unchanged; it is what
+    -- keeps a 6x6 Hard dig fast (the unpruned walk wandered off and came
+    -- back far too late, ~1 s per puzzle on a desktop, ~25 s on a Kobo).
+    local given_r, given_c = {}, {}
+    for r = 1, n do
+        for c = 1, n do
+            if given[r][c] then
+                given_r[puzzle[r][c]] = r
+                given_c[puzzle[r][c]] = c
             end
-            if given_pos then
-                cell_of_num[1] = given_pos
-                num_of_cell[given_pos[1]][given_pos[2]] = 1
-                search(2)
-                num_of_cell[given_pos[1]][given_pos[2]] = nil
-            else
-                for r = 1, n do
-                    for c = 1, n do
-                        if not num_of_cell[r][c] then
-                            cell_of_num[1] = { r, c }
-                            num_of_cell[r][c] = 1
-                            search(2)
-                            num_of_cell[r][c] = nil
-                            if solutions >= limit or exhausted then return end
-                        end
-                    end
-                end
-            end
-            return
         end
+    end
+    local next_given = {}
+    for k = total + 1, 1, -1 do
+        next_given[k] = given_r[k] and k or next_given[k + 1]
+    end
+    local occupied = {}
+    for r = 1, n do occupied[r] = {} end
+    local path_r, path_c = {}, {}
+    -- A free cell needs two ways in and out (one if it can be the last
+    -- number, i.e. when n*n isn't given).
+    local min_exits = given_r[total] and 2 or 1
 
+    -- Gaps between consecutive given numbers: gap j runs from the j-th
+    -- given number to the (j+1)-th. A free cell x can only hold a number of
+    -- gap j when dist(start of j, x) + dist(x, end of j) fits the gap's
+    -- length; last_gap[x] is the latest gap x fits. Once the path is past
+    -- that gap x can never be filled, and the free cells that only fit the
+    -- current gap must fit in its remaining slots. (Only when both 1 and
+    -- n*n are given, which generate() always keeps.)
+    local function dist(r1, c1, r2, c2)
+        local dr, dc = r1 - r2, c1 - c2
+        if dr < 0 then dr = -dr end
+        if dc < 0 then dc = -dc end
+        return dr > dc and dr or dc
+    end
+    local gap_of, gap_end, gap_cells, check_from = {}, {}, nil, nil
+    if given_r[1] and given_r[total] then
+        local seq = {}
+        for k = 1, total do
+            if given_r[k] then seq[#seq + 1] = k end
+        end
+        local j = 0
+        for k = 1, total do
+            if given_r[k] then j = j + 1 end
+            gap_of[k] = j            -- a free number k lies in gap j
+        end
+        gap_cells = {}               -- gap_cells[j]: free cells whose last gap is j
+        for i = 0, #seq do gap_cells[i] = {} end
+        for i = 1, #seq - 1 do gap_end[i] = seq[i + 1] end
+        -- A gap with no free number can't hold any cell (two king steps at
+        -- least), so on entering gap j only the gaps back to the previous
+        -- one with free numbers need checking: check_from[j].
+        check_from = {}
+        local last_open = 1
+        for i = 1, #seq - 1 do
+            check_from[i] = last_open
+            if seq[i + 1] - seq[i] > 1 then last_open = i end
+        end
         for r = 1, n do
             for c = 1, n do
-                if given[r][c] and puzzle[r][c] == num then given_pos = { r, c }; break end
-            end
-            if given_pos then break end
-        end
-
-        local prev = cell_of_num[num - 1]
-        local candidates = {}
-        for _, d in ipairs(DIRS) do
-            local nr, nc = prev[1] + d[1], prev[2] + d[2]
-            if nr >= 1 and nr <= n and nc >= 1 and nc <= n and not num_of_cell[nr][nc] then
-                candidates[#candidates + 1] = { nr, nc }
-            end
-        end
-        if given_pos then
-            local ok = false
-            for _, cand in ipairs(candidates) do
-                if cand[1] == given_pos[1] and cand[2] == given_pos[2] then ok = true; break end
-            end
-            if ok then
-                cell_of_num[num] = given_pos
-                num_of_cell[given_pos[1]][given_pos[2]] = num
-                search(num + 1)
-                num_of_cell[given_pos[1]][given_pos[2]] = nil
-            end
-        else
-            for _, cand in ipairs(candidates) do
-                if not given[cand[1]][cand[2]] then
-                    cell_of_num[num] = cand
-                    num_of_cell[cand[1]][cand[2]] = num
-                    search(num + 1)
-                    num_of_cell[cand[1]][cand[2]] = nil
-                    if solutions >= limit or exhausted then return end
+                if not given[r][c] then
+                    local best = 0
+                    for i = 1, #seq - 1 do
+                        local a, b = seq[i], seq[i + 1]
+                        if dist(given_r[a], given_c[a], r, c) + dist(r, c, given_r[b], given_c[b]) <= b - a then
+                            best = i
+                        end
+                    end
+                    local list = gap_cells[best]
+                    list[#list + 1] = r
+                    list[#list + 1] = c
                 end
             end
         end
     end
 
-    search(1)
+    -- Free number num goes next, after (pr, pc), in gap j. On entering the
+    -- gap, every cell whose last gap is behind must be filled already; and
+    -- the free cells that only fit gap j must fit in what is left of it.
+    local function gapsBlocked(num, pr, pc)
+        local j = gap_of[num]
+        if given_r[num - 1] then
+            for i = check_from[j], j - 1 do
+                local list = gap_cells[i]
+                for t = 1, #list, 2 do
+                    if not occupied[list[t]][list[t + 1]] then return true end
+                end
+            end
+        end
+        local g = gap_end[j]
+        local gr, gc = given_r[g], given_c[g]
+        local slots = g - num
+        local need = 0
+        local list = gap_cells[j]
+        for t = 1, #list, 2 do
+            local r, c = list[t], list[t + 1]
+            if not occupied[r][c] then
+                if dist(pr, pc, r, c) + dist(r, c, gr, gc) > slots + 1 then return true end
+                need = need + 1
+                if need > slots then return true end
+            end
+        end
+        return false
+    end
+
+    -- A free cell that fits no gap at all: no solution.
+    if gap_cells and #gap_cells[0] > 0 then return 0, false end
+
+    local solutions, nodes, exhausted = 0, 0, false
+
+    -- Once number k is placed, the cell holding k - 1 is closed off for good:
+    -- any free cell next to it that is left with fewer than min_exits
+    -- unoccupied neighbours (the head counts as one) can never be filled.
+    local function strandsNeighbour(k)
+        local qr, qc = path_r[k - 1], path_c[k - 1]
+        if not qr then return false end
+        local hr, hc = path_r[k], path_c[k]
+        for _, d in ipairs(DIRS) do
+            local xr, xc = qr + d[1], qc + d[2]
+            if xr >= 1 and xr <= n and xc >= 1 and xc <= n
+                    and not occupied[xr][xc] and not given[xr][xc] then
+                local exits = 0
+                for _, e in ipairs(DIRS) do
+                    local yr, yc = xr + e[1], xc + e[2]
+                    if yr >= 1 and yr <= n and yc >= 1 and yc <= n
+                            and (not occupied[yr][yc] or (yr == hr and yc == hc)) then
+                        exits = exits + 1
+                        if exits >= min_exits then break end
+                    end
+                end
+                if exits < min_exits then return true end
+            end
+        end
+        return false
+    end
+
+    local function reachable(r, c, num)
+        local g = next_given[num + 1]
+        if not g then return true end
+        local dr, dc = r - given_r[g], c - given_c[g]
+        if dr < 0 then dr = -dr end
+        if dc < 0 then dc = -dc end
+        return (dr > dc and dr or dc) <= g - num
+    end
+
+    -- Many orderings of the same cells reach the same position: memoise
+    -- the (capped) completion count per (occupied cells, head). The prunes
+    -- above only ever cut positions with no completion at all, so a memo
+    -- entry is the same whichever way the position was reached. Keys are
+    -- exact doubles while n*n + 6 bits fit in 53, i.e. up to 6x6 (the
+    -- largest size offered); bigger boards just search without it.
+    local memo = total <= 36 and {} or nil
+    local bit_of = {}
+    for r = 1, n do
+        bit_of[r] = {}
+        for c = 1, n do bit_of[r][c] = 2 ^ ((r - 1) * n + (c - 1)) end
+    end
+    local mask = 0
+
+    -- Returns the number of completions from here, capped at `limit`.
+    local function search(num, pr, pc)
+        if exhausted then return 0 end
+        nodes = nodes + 1
+        if nodes > node_budget then exhausted = true; return 0 end
+        if num > total then return 1 end
+        local key
+        if memo and num > 1 then
+            key = mask * 64 + (pr - 1) * n + pc
+            local m = memo[key]
+            if m then return m end
+        end
+
+        local count = 0
+        local gr = given_r[num]
+        if gr then
+            local gc = given_c[num]
+            -- A given cell is never taken by another number (free numbers
+            -- skip given cells), so only adjacency to num - 1 matters.
+            if num == 1 or (math.abs(gr - pr) <= 1 and math.abs(gc - pc) <= 1) then
+                occupied[gr][gc] = true
+                path_r[num], path_c[num] = gr, gc
+                mask = mask + bit_of[gr][gc]
+                if not (num > 1 and strandsNeighbour(num)) then
+                    count = search(num + 1, gr, gc)
+                end
+                mask = mask - bit_of[gr][gc]
+                occupied[gr][gc] = nil
+            end
+        elseif not (gap_cells and gapsBlocked(num, pr, pc)) then
+            for t = 1, (num == 1 and n * n or #DIRS) do
+                local nr, nc
+                if num == 1 then
+                    nr, nc = math.floor((t - 1) / n) + 1, (t - 1) % n + 1
+                else
+                    nr, nc = pr + DIRS[t][1], pc + DIRS[t][2]
+                end
+                if nr >= 1 and nr <= n and nc >= 1 and nc <= n
+                        and not occupied[nr][nc] and not given[nr][nc]
+                        and reachable(nr, nc, num) then
+                    occupied[nr][nc] = true
+                    path_r[num], path_c[num] = nr, nc
+                    mask = mask + bit_of[nr][nc]
+                    if not (num > 1 and strandsNeighbour(num)) then
+                        count = count + search(num + 1, nr, nc)
+                    end
+                    mask = mask - bit_of[nr][nc]
+                    occupied[nr][nc] = nil
+                    if count >= limit or exhausted then break end
+                end
+            end
+        end
+        if count > limit then count = limit end
+        if key and not exhausted then memo[key] = count end
+        return count
+    end
+
+    solutions = search(1)
     return solutions, exhausted
 end
 
@@ -246,7 +387,9 @@ function HidatoBoard:new(opts)
         sel_r       = nil,
         sel_c       = nil,
     }, self)
-    obj:generate(obj.difficulty)
+    -- opts.empty: the caller loads a save or generates right after (with
+    -- the progress bar), so skip the throwaway puzzle.
+    if not opts.empty then obj:generate(obj.difficulty) end
     return obj
 end
 
@@ -254,7 +397,8 @@ end
 -- Generate
 -- ---------------------------------------------------------------------------
 
-function HidatoBoard:generate(difficulty)
+-- on_progress (optional): called with a 0..1 fraction while digging.
+function HidatoBoard:generate(difficulty, on_progress)
     self.difficulty = difficulty or self.difficulty
     local n         = self.n
     local total     = n * n
@@ -292,8 +436,9 @@ function HidatoBoard:generate(difficulty)
     local num_extra   = math.floor((total - 2) * given_ratio)
     local target_hide = (total - 2) - num_extra
     local hidden      = 0
-    for _, k in ipairs(intermediate) do
+    for i, k in ipairs(intermediate) do
         if hidden >= target_hide then break end
+        if on_progress then on_progress(i / #intermediate) end
         local r, c = path[k][1], path[k][2]
         local saved = puzzle[r][c]
         puzzle[r][c] = 0
@@ -464,5 +609,8 @@ function HidatoBoard:load(data)
 end
 
 HidatoBoard.DIRS = DIRS
+
+-- for the specs
+HidatoBoard._countCompletions = countCompletions
 
 return HidatoBoard
