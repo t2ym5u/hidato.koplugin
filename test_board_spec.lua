@@ -86,6 +86,150 @@ describe("HidatoBoard", function()
         end)
     end)
 
+    -- 1.5.0: the completion counter prunes (next given out of reach, a
+    -- cell left with no way in and out, cells that no longer fit any gap
+    -- between givens) and memoises positions (6x6 Hard took up to ~1 s on
+    -- a desktop). Keep the old counter here and check the two agree, and
+    -- that generation stays unique and quick.
+    describe("counter", function()
+        local DIRS = Board and Board.DIRS or {
+            { -1, -1 }, { -1, 0 }, { -1, 1 },
+            {  0, -1 },            {  0, 1 },
+            {  1, -1 }, {  1, 0 }, {  1, 1 },
+        }
+
+        -- The pre-1.5.0 counter, verbatim.
+        local function oldCountCompletions(puzzle, given, n, limit, node_budget)
+            local total = n * n
+            local cell_of_num = {}
+            local num_of_cell = {}
+            for r = 1, n do num_of_cell[r] = {} end
+
+            local solutions, nodes, exhausted = 0, 0, false
+
+            local function search(num)
+                if solutions >= limit or exhausted then return end
+                nodes = nodes + 1
+                if nodes > node_budget then exhausted = true; return end
+                if num > total then solutions = solutions + 1; return end
+
+                local given_pos = nil
+                if num == 1 then
+                    for r = 1, n do
+                        for c = 1, n do
+                            if given[r][c] and puzzle[r][c] == 1 then given_pos = { r, c }; break end
+                        end
+                        if given_pos then break end
+                    end
+                    if given_pos then
+                        cell_of_num[1] = given_pos
+                        num_of_cell[given_pos[1]][given_pos[2]] = 1
+                        search(2)
+                        num_of_cell[given_pos[1]][given_pos[2]] = nil
+                    else
+                        for r = 1, n do
+                            for c = 1, n do
+                                if not num_of_cell[r][c] then
+                                    cell_of_num[1] = { r, c }
+                                    num_of_cell[r][c] = 1
+                                    search(2)
+                                    num_of_cell[r][c] = nil
+                                    if solutions >= limit or exhausted then return end
+                                end
+                            end
+                        end
+                    end
+                    return
+                end
+
+                for r = 1, n do
+                    for c = 1, n do
+                        if given[r][c] and puzzle[r][c] == num then given_pos = { r, c }; break end
+                    end
+                    if given_pos then break end
+                end
+
+                local prev = cell_of_num[num - 1]
+                local candidates = {}
+                for _, d in ipairs(DIRS) do
+                    local nr, nc = prev[1] + d[1], prev[2] + d[2]
+                    if nr >= 1 and nr <= n and nc >= 1 and nc <= n and not num_of_cell[nr][nc] then
+                        candidates[#candidates + 1] = { nr, nc }
+                    end
+                end
+                if given_pos then
+                    local ok = false
+                    for _, cand in ipairs(candidates) do
+                        if cand[1] == given_pos[1] and cand[2] == given_pos[2] then ok = true; break end
+                    end
+                    if ok then
+                        cell_of_num[num] = given_pos
+                        num_of_cell[given_pos[1]][given_pos[2]] = num
+                        search(num + 1)
+                        num_of_cell[given_pos[1]][given_pos[2]] = nil
+                    end
+                else
+                    for _, cand in ipairs(candidates) do
+                        if not given[cand[1]][cand[2]] then
+                            cell_of_num[num] = cand
+                            num_of_cell[cand[1]][cand[2]] = num
+                            search(num + 1)
+                            num_of_cell[cand[1]][cand[2]] = nil
+                            if solutions >= limit or exhausted then return end
+                        end
+                    end
+                end
+            end
+
+            search(1)
+            return solutions, exhausted
+        end
+        it("counts the same completions as the old counter on random instances", function()
+            for _, n in ipairs({ 5, 6 }) do
+                for seed = 1, 30 do
+                    math.randomseed(seed * 31337 + n)
+                    local b = Board:new{ n = n, difficulty = "easy" }
+                    local puzzle, given = {}, {}
+                    local ratio = math.random() * 0.6 + 0.2
+                    for r = 1, n do
+                        puzzle[r], given[r] = {}, {}
+                        for c = 1, n do
+                            local v = b.solution[r][c]
+                            local keep = v == 1 or v == n * n or math.random() < ratio
+                            puzzle[r][c] = keep and v or 0
+                            given[r][c] = keep
+                        end
+                    end
+                    local so, eo = oldCountCompletions(puzzle, given, n, 2, 400000)
+                    local sn, en = Board._countCompletions(puzzle, given, n, 2, 4000000)
+                    if not eo then
+                        assert.is_false(en)
+                        assert.are.equal(so, sn, ("n=%d seed %d"):format(n, seed))
+                    end
+                end
+            end
+        end)
+
+        it("generates uniquely solvable puzzles quickly at every size and difficulty", function()
+            for _, n in ipairs({ 5, 6 }) do
+                for _, diff in ipairs({ "easy", "medium", "hard" }) do
+                    local worst = 0
+                    for seed = 1, 8 do
+                        math.randomseed(seed * 7919 + n)
+                        local t0 = os.clock()
+                        local b = Board:new{ n = n, difficulty = diff }
+                        worst = math.max(worst, os.clock() - t0)
+                        local count, exhausted = Board._countCompletions(b.puzzle, b.given, n, 2, 10000000)
+                        assert.is_false(exhausted)
+                        assert.are.equal(1, count, ("n=%d %s seed %d"):format(n, diff, seed))
+                    end
+                    -- generous: ~0.05 s on a desktop
+                    assert.is_true(worst < 2.0, ("n=%d %s took %.2f s"):format(n, diff, worst))
+                end
+            end
+        end)
+    end)
+
     describe("setCell / clearCell / isSolved", function()
         it("filling every cell with the solution values solves the board", function()
             local b = newBoard(5)
