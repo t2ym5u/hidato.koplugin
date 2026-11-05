@@ -12,10 +12,9 @@ Fill the grid with consecutive numbers 1 to N. Each pair of consecutive numbers 
 
 ## Features
 
-- **Multiple grid sizes**
-- **Three difficulty levels** — Easy, Medium, Hard
-- **Path highlighting** — shows the chain of placed numbers
-- **Check** — validates adjacency between consecutive numbers
+- **Two grid sizes** — 5×5 and 6×6
+- **Three difficulty levels** — Easy, Medium, Hard; every puzzle has one solution and can be solved by logic alone, no guessing (Easy needs only the simple steps, Hard shows the fewest numbers)
+- **Check** — marks the numbers you placed that are wrong and counts the empty cells
 - **Hint** — two taps: the first says which cell is about to give, the second acts on it. A cell that contradicts the solution is always reported before a fresh one is revealed
 - **Auto-save** — puzzle state saved and restored on next launch
 
